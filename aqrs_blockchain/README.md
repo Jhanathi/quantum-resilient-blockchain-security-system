@@ -145,7 +145,7 @@ Protected Resource
 
 ### Environment variables
 
-Create or update a local `.env` file based on `.env.example`:
+Set these variables in the shell that starts the application. The project does not automatically load a `.env` file:
 
 ```bash
 SECRET_KEY=your-local-secret
@@ -154,9 +154,43 @@ DATABASE_URL=sqlite:///./pqbank.db
 DATABASE_ECHO=false
 ```
 
+### Safe database configuration and testing
+
+The application uses a single, explicit SQLite database path derived from the project root. The production database is always `pqbank.db` in the repository root. Tests must never operate against that file; they are redirected to `test_pqbank.db` by the test configuration. This prevents resets or cleanup from destroying the live application state.
+
+For Windows CMD, start the app from the repository root with:
+
+```cmd
+cd /d C:\Users\JHANATHI M V\Desktop\Quantum-Ressiliant-Blockchain\aqrs_blockchain
+set SECRET_KEY=my-local-secret
+set DATABASE_URL=sqlite:///./pqbank.db
+python app.py
+```
+
+Run tests against the isolated database with:
+
+```cmd
+cd /d C:\Users\JHANATHI M V\Desktop\Quantum-Ressiliant-Blockchain\aqrs_blockchain
+set TEST_DATABASE_URL=sqlite:///./test_pqbank.db
+set DATABASE_URL=sqlite:///./test_pqbank.db
+python -m pytest tests/test_auth.py -q
+python -m pytest -q
+```
+
+If a target file is accidentally set to the production database during tests, the project now aborts with a clear error rather than dropping or recreating the live schema.
+
+Back up the live SQLite database before any schema changes or data migration work:
+
+```cmd
+cd /d C:\Users\JHANATHI M V\Desktop\Quantum-Ressiliant-Blockchain\aqrs_blockchain
+copy pqbank.db "C:\temp\pqbank_backup_before_migration.db"
+```
+
+Check that the backup file is readable and contains the expected tables before continuing. Do not overwrite the backup with a copy made after data loss. Use differences or a fresh backup if the main database has already been reset.
+
 ### Development user creation
 
-For local testing, create a standard user through the registration endpoint. Example payload:
+The test suite uses an isolated SQLite database; test users are not available to the running application. Register an account through `/register` so it is written to the same database used by the app. Public registration creates customer accounts only. Example payload:
 
 ```json
 {
@@ -175,6 +209,23 @@ Then log in via:
   "password": "StrongPass123!"
 }
 ```
+
+On Windows PowerShell, start the application from the repository root with:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+$env:SECRET_KEY = python -c "import secrets; print(secrets.token_hex(32))"
+$env:DATABASE_URL = "sqlite:///./pqbank.db"
+python app.py
+```
+
+Open `http://127.0.0.1:5000/register`, create the customer account, then sign in at `/login` using that account's email or exact username and password. There are no built-in administrator credentials. To initialize an administrator securely, run this command and enter the password only at its hidden prompt:
+
+```powershell
+python -m backend.database.create_admin --name "System Administrator" --email "admin@example.com" --username "admin"
+```
+
+The optional development data seeder also requires explicit `admin_password` and `customer_password` arguments; it does not install default credentials.
 
 ### Risk classification and AQRS decision flow
 
@@ -265,6 +316,30 @@ python app.py
 
 Then open the local endpoint at `http://127.0.0.1:5000`.
 
+## Module 11: Self-Service Password Security
+
+The repository did not previously define a Module 11. This proposed module adds authenticated password changes without email-based reset, since no verified email-delivery service is configured.
+
+- `GET /account/security` renders the password-change page for any authenticated role; anonymous page requests redirect to login.
+- `POST /api/auth/password` requires an authenticated session and current password, plus matching new-password and confirmation fields. It reuses the registration password policy and Werkzeug hashing.
+- Successful password changes increment `users.auth_version`, revoke all existing sessions, and require a fresh login. Failed attempts and successful changes are audited without recording password values or hashes.
+- The `auth_version` column is added with the existing additive schema migration. Existing users receive version `0`; no account data is reset.
+- Security settings are linked from customer and operations navigation. Public registration remains customer-only, and each user may change only their own password.
+
+Focused tests: `python -m pytest tests/test_module11_auth.py -v`.
+Full regression suite: `python -m pytest -v`.
+
+## Module 13: Security Audit & Reporting
+
+Persistent security events are available to `ADMIN` and `SECURITY_ANALYST`
+roles at `/security/audit`. The dashboard supports filtering and pagination,
+safe event details, and bounded CSV/JSON reports. Module 12 lab records are
+identified as demo/simulation events, not production incidents.
+
+See [docs/MODULE13_SECURITY_AUDIT_REPORTING.md](docs/MODULE13_SECURITY_AUDIT_REPORTING.md)
+for event schema, instrumentation, access rules, report endpoints, security
+limitations, and verification instructions.
+
 ## Future Development Roadmap
 
 ### Module 0
@@ -297,3 +372,89 @@ Then open the local endpoint at `http://127.0.0.1:5000`.
 ## Important Note
 
 This repository must preserve the research engine as a separate concern from the future banking application. The research layer remains essential to the project’s academic and engineering contribution.
+
+## Deployment & Production Packaging
+
+This project already supports environment-based startup and explicit database segregation. The default application database remains `pqbank.db` in the repository root and should never be used as a test target. Use an isolated SQLite path such as `test_pqbank.db` or a temporary file for automated tests and demo seeding.
+
+### Supported configuration variables
+
+The app honors the following environment variables:
+
+- `APP_ENV` or `FLASK_ENV`: `development`, `testing`, `demo`, or `production`
+- `SECRET_KEY`: required for non-testing startup; production must set it explicitly
+- `DATABASE_URL`: SQLite database path used by the main application
+- `TEST_DATABASE_URL`: isolated database for tests
+- `DATABASE_ECHO`: enable SQL echo for debugging
+- `APP_HOST` or `HOST`: bind address for `python app.py`
+- `APP_PORT` or `PORT`: bind port
+- `APP_DEBUG` or `FLASK_DEBUG`: debug mode
+- `SESSION_COOKIE_SECURE`: secure cookies when behind HTTPS
+- `SESSION_IDLE_TIMEOUT_SECONDS`: idle session lifetime
+- `SESSION_ABSOLUTE_TIMEOUT_SECONDS`: absolute session lifetime
+- `TRUSTED_PROXY_CIDRS`: comma-delimited CIDR list for trusted reverse-proxy peers
+
+The app will also accept optional `.env` values when `python-dotenv` is installed. A safe template is in [`.env.example`](.env.example). Copy it to `.env` and replace placeholders before local startup; never commit a real `.env` file.
+
+### Windows PowerShell setup
+
+```powershell
+cd "C:\Users\JHANATHI M V\Desktop\Quantum-Ressiliant-Blockchain\aqrs_blockchain"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+# edit .env and replace the SECRET_KEY and any database paths you need
+$env:APP_ENV = "development"
+$env:SECRET_KEY = "replace-with-a-random-secret-key"
+$env:DATABASE_URL = "sqlite:///./pqbank.db"
+python app.py
+```
+
+If you are running tests, keep them on an isolated database:
+
+```powershell
+$env:APP_ENV = "testing"
+$env:SECRET_KEY = "test-secret"
+$env:TEST_DATABASE_URL = "sqlite:///./test_pqbank.db"
+$env:DATABASE_URL = "sqlite:///./test_pqbank.db"
+python -m pytest -q
+```
+
+### Safe database initialization
+
+The application uses SQLAlchemy metadata creation at startup and an additive migration helper for SQLite schema compatibility. For a fresh local install, create the database file and initialize tables by starting the app with the desired database URL. Do not call destructive database resets against the real `pqbank.db`.
+
+Explicit demo data is opt-in via `backend.database.seed.seed_database(...)` and refuses to target the production database unless `allow_production=True` is passed intentionally. This keeps local seed/demo work separate from the live store.
+
+### Production safety notes
+
+- Production startup fails fast if `SECRET_KEY` is missing.
+- Debug mode is rejected in production.
+- Cookie security is enabled when the app is configured for production HTTPS.
+- Health checks do not reveal secrets or internal credentials.
+- Docker is optional and not required; the app is intentionally kept lightweight and deployable via a standard Python process manager or a reverse proxy.
+
+### Health checks
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:5000/health
+```
+
+The response returns only a safe status payload and the configured environment name.
+
+### Known limitations
+
+- This project is a prototype banking and research application, not a proof of quantum security.
+- The real PQC implementation uses the project’s simulator and ML-DSA integration patterns rather than a production-grade post-quantum PKI.
+- SQLite is the default engine for local and test use; production deployment should validate the exact database engine and concurrency model before going live.
+
+## Manual verification checklist
+
+1. Create a virtual environment and install `requirements.txt`.
+2. Copy `.env.example` to `.env` and replace the placeholders.
+3. Start the app without touching the real `pqbank.db` unless explicitly intended.
+4. Confirm `GET /health` returns `{"status": "ok"}`.
+5. Run at least the auth and database-safety tests with the isolated database.
+6. Review the diff for accidental changes to tracked databases or secrets.

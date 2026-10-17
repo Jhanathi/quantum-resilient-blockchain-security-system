@@ -40,9 +40,11 @@ def serialize_experiment(experiment: Experiment) -> dict[str, Any]:
 
 
 def _validate_config(transaction_count: int, seed: int | None, modes: list[str] | None) -> tuple[int, int | None, list[str]]:
-    if transaction_count < 1 or transaction_count > 1000:
+    if type(transaction_count) is not int or transaction_count < 1 or transaction_count > 1000:
         raise ValueError("transaction_count must be between 1 and 1000.")
-    selected_modes = list(modes or RESEARCH_MODES)
+    if seed is not None and type(seed) is not int:
+        raise ValueError("seed must be an integer.")
+    selected_modes = list(RESEARCH_MODES if modes is None else modes)
     if not selected_modes or any(mode not in RESEARCH_MODES for mode in selected_modes):
         raise ValueError(f"modes must contain only: {', '.join(RESEARCH_MODES)}.")
     if "ECDSA" not in selected_modes:

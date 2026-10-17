@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 from app import app
@@ -83,6 +84,26 @@ def test_risk_classification_thresholds():
     assert classify_transaction_risk(Decimal("1000.00")) == RiskLevel.MEDIUM
     assert classify_transaction_risk(Decimal("99999.99")) == RiskLevel.MEDIUM
     assert classify_transaction_risk(Decimal("100000.00")) == RiskLevel.HIGH
+
+
+@pytest.mark.parametrize(
+    ("amount", "risk_level", "security_level"),
+    [
+        ("0.01", RiskLevel.LOW, 2),
+        ("999.99", RiskLevel.LOW, 2),
+        ("1000.00", RiskLevel.MEDIUM, 3),
+        ("1000.01", RiskLevel.MEDIUM, 3),
+        ("99999.99", RiskLevel.MEDIUM, 3),
+        ("100000.00", RiskLevel.HIGH, 5),
+        ("100000.01", RiskLevel.HIGH, 5),
+    ],
+)
+def test_aqrs_exact_threshold_boundaries(amount, risk_level, security_level):
+    from backend.services.risk_service import build_decision_for_amount
+
+    decision = build_decision_for_amount(Decimal(amount))
+    assert decision["risk_level"] == risk_level.value
+    assert decision["selected_security_level"] == security_level
 
 
 def test_aqrs_mapping_and_decision_values():

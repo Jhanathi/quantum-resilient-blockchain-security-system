@@ -1,15 +1,41 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from backend.config import DATABASE_ECHO, DATABASE_URL
+from backend.config import BASE_DIR, DATABASE_ECHO, DATABASE_URL, PRODUCTION_DATABASE_PATH
 
 
 class Base(DeclarativeBase):
     pass
 
+
+def _resolved_sqlite_path(url: str) -> Path | None:
+    if not url.startswith("sqlite") or "memory" in url:
+        return None
+    if url.startswith("sqlite:///"):
+        candidate = url.replace("sqlite:///", "", 1)
+        if candidate.startswith("/"):
+            return Path(candidate)
+        return (BASE_DIR / candidate).resolve()
+    return None
+
+
+def is_production_database(url: str | None) -> bool:
+    if not url:
+        return False
+    if url.startswith("sqlite:///:memory:"):
+        return False
+    candidate = _resolved_sqlite_path(url)
+    return candidate is not None and candidate.resolve() == PRODUCTION_DATABASE_PATH
+
+
 def _build_engine(url: str, echo: bool = False):
+    if url.startswith("sqlite"):
+        return create_engine(url, echo=echo, future=True, connect_args={"timeout": 30})
     return create_engine(url, echo=echo, future=True)
 
 
@@ -17,13 +43,23 @@ class DatabaseManager:
     def __init__(self, url: str | None = None, echo: bool | None = None):
         self.url = url or DATABASE_URL
         self.echo = DATABASE_ECHO if echo is None else echo
+        if os.environ.get("PYTEST_CURRENT_TEST") and is_production_database(self.url):
+            raise RuntimeError(
+                "Refusing to run tests against the real application database. "
+                "Set TEST_DATABASE_URL to an isolated SQLite file or use the project conftest."
+            )
         self.engine = _build_engine(self.url, self.echo)
         self.SessionLocal = sessionmaker(bind=self.engine, autocommit=False, autoflush=False, future=True)
 
     def create_all(self):
         Base.metadata.create_all(bind=self.engine)
 
-    def drop_all(self):
+    def drop_all(self, *, allow_production: bool = False):
+        if not allow_production and is_production_database(self.url):
+            raise RuntimeError(
+                "Refusing to drop the production database without an explicit opt-in. "
+                "Use allow_production=True only for deliberate maintenance tasks."
+            )
         Base.metadata.drop_all(bind=self.engine)
 
     def get_session(self) -> Session:
@@ -46,6 +82,9 @@ def _migrate_existing_sqlite_schema() -> None:
             if "last_login" not in existing_columns:
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE users ADD COLUMN last_login DATETIME"))
+            if "auth_version" not in existing_columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0"))
 
         if "aqrs_decisions" in tables:
             existing_columns = {column["name"] for column in inspector.get_columns("aqrs_decisions")}

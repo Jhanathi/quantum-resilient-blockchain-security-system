@@ -1,20 +1,35 @@
 from __future__ import annotations
 
+import os
 from decimal import Decimal
 
 from sqlalchemy import select
+from werkzeug.security import generate_password_hash
 
+from backend.config import DATABASE_URL, PRODUCTION_DATABASE_PATH, is_production_database
 from backend.database.database import SessionLocal, create_tables
 from backend.models.account import Account, AccountStatus, AccountType
 from backend.models.transaction import RiskLevel, Transaction, TransactionStatus
 from backend.models.user import User, UserRole
 
 
-def seed_database() -> dict[str, int]:
+def seed_database(*, admin_password: str, customer_password: str, allow_production: bool = False) -> dict[str, int]:
     """Create development/demo entities for local database work.
 
-    This is explicitly demo data and should not be used in production.
+    This is explicitly demo data and should not be used in production without an
+    explicit opt-in.
     """
+    target_url = os.getenv("DATABASE_URL", DATABASE_URL)
+    if is_production_database(target_url) and not allow_production:
+        raise RuntimeError(
+            "Refusing to seed demo data in the production database. "
+            "Set DATABASE_URL to a temporary SQLite database or pass allow_production=True for an explicit maintenance action."
+        )
+
+    for label, password in (("admin", admin_password), ("customer", customer_password)):
+        if len(password) < 8 or not any(char.isupper() for char in password) or not any(char.islower() for char in password) or not any(char.isdigit() for char in password):
+            raise ValueError(f"The {label} password must include at least 8 characters, uppercase, lowercase, and a number.")
+
     create_tables()
     session = SessionLocal()
     try:
@@ -29,7 +44,7 @@ def seed_database() -> dict[str, int]:
             name="Admin User",
             username="admin",
             email="admin@example.com",
-            password_hash="demo_admin_hash",
+            password_hash=generate_password_hash(admin_password),
             role=UserRole.ADMIN,
             is_active=True,
         )
@@ -37,7 +52,7 @@ def seed_database() -> dict[str, int]:
             name="Customer One",
             username="customer1",
             email="customer1@example.com",
-            password_hash="demo_customer_hash",
+            password_hash=generate_password_hash(customer_password),
             role=UserRole.CUSTOMER,
             is_active=True,
         )
@@ -45,7 +60,7 @@ def seed_database() -> dict[str, int]:
             name="Customer Two",
             username="customer2",
             email="customer2@example.com",
-            password_hash="demo_customer_hash",
+            password_hash=generate_password_hash(customer_password),
             role=UserRole.CUSTOMER,
             is_active=True,
         )

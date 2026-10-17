@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <title>{% block title %}PQBank{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='static/css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body data-page="{{ page }}"{% if transaction_id %} data-transaction-id="{{ transaction_id }}"{% endif %}>
   <div class="app-shell">
@@ -14,12 +15,13 @@
         <a href="/dashboard" data-nav="dashboard">Overview</a>
         <a href="/transfer" data-nav="transfer">Transfer</a>
         <a href="/transactions" data-nav="transactions">History</a>
+        <a href="/account/security" data-nav="account-security">Security settings</a>
       </nav>
       <div class="user-menu"><span id="user-name">Customer</span><button class="button button-quiet" id="logout-button" type="button">Log out</button></div>
     </header>
     <main class="page-wrap">{% block content %}{% endblock %}</main>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="{{ url_for('static', filename='static/js/app.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </body>
 </html>

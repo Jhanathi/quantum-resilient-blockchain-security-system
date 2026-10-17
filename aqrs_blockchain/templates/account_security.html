@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Security Settings - PQBank{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Account security</p>
+    <h1>Change password</h1>
+    <p class="muted">Confirm your current password to set a new one. Other active sessions will be signed out.</p>
+  </div>
+</section>
+<section class="panel-card">
+  <form id="password-change-form" class="form-stack">
+    <label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label>
+    <label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>Confirm new password<input name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></label>
+    <p class="form-error" id="password-change-error" role="alert"></p>
+    <button class="button button-primary" type="submit">Update password</button>
+  </form>
+</section>
+{% endblock %}

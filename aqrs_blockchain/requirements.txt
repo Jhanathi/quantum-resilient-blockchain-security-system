@@ -4,3 +4,4 @@ matplotlib
 pandas
 flask
 flask-cors
+python-dotenv

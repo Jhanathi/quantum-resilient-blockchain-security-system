@@ -99,7 +99,7 @@ def test_valid_transfer_succeeds_and_updates_balances():
     login(client, "transfer_a@example.com", "StrongPass123!")
     response = client.post(
         "/api/transactions",
-        json={"sender_account_id": acc_a.id, "receiver_account_id": acc_b.id, "amount": "1000.00"},
+        json={"sender_account_id": acc_a.id, "receiver_account_number": acc_b.account_number, "amount": "1000.00"},
     )
 
     assert response.status_code == 200
@@ -114,6 +114,11 @@ def test_valid_transfer_succeeds_and_updates_balances():
         assert str(updated_a.balance) == "4000.00"
         assert str(updated_b.balance) == "3000.00"
         assert txn.status == TransactionStatus.COMPLETED
+
+    login(client, "transfer_b@example.com", "StrongPass123!")
+    recipient_history = client.get("/api/transactions")
+    assert recipient_history.status_code == 200
+    assert any(item["transaction_id"] == payload["transaction"]["transaction_id"] for item in recipient_history.get_json()["transactions"])
 
 
 def test_transaction_validation_rejects_invalid_amounts():
@@ -145,7 +150,7 @@ def test_sender_and_receiver_cannot_be_same_and_missing_accounts_rejected():
 
     login(client, "sameuser@example.com", "StrongPass123!")
 
-    same_resp = client.post("/api/transactions", json={"sender_account_id": acc.id, "receiver_account_id": acc.id, "amount": "50.00"})
+    same_resp = client.post("/api/transactions", json={"sender_account_id": acc.id, "receiver_account_number": acc.account_number, "amount": "50.00"})
     assert same_resp.status_code in {400, 409}
 
     missing_sender = client.post("/api/transactions", json={"sender_account_id": "missing", "receiver_account_id": acc.id, "amount": "50.00"})
@@ -153,6 +158,31 @@ def test_sender_and_receiver_cannot_be_same_and_missing_accounts_rejected():
 
     missing_receiver = client.post("/api/transactions", json={"sender_account_id": acc.id, "receiver_account_id": "missing", "amount": "50.00"})
     assert missing_receiver.status_code == 404
+
+
+def test_transfer_rejects_malformed_or_nonexistent_recipient_account_number():
+    reset_db()
+    client = make_client()
+    user_a = create_customer("recipient-validation@example.com", "recipientvalidation")
+    sender = create_account(user_a.id, "ACC-VALID-SENDER", "5000.00")
+    login(client, "recipient-validation@example.com", "StrongPass123!")
+
+    malformed = client.post(
+        "/api/transactions",
+        json={"sender_account_id": sender.id, "receiver_account_number": "not an account", "amount": "50.00"},
+    )
+    nonexistent = client.post(
+        "/api/transactions",
+        json={"sender_account_id": sender.id, "receiver_account_number": "INR-99999", "amount": "50.00"},
+    )
+
+    assert malformed.status_code == 400
+    assert malformed.get_json()["error"] == "Recipient account number is invalid."
+    assert nonexistent.status_code == 404
+    assert nonexistent.get_json()["error"] == "Account not found."
+    with SessionLocal() as db:
+        assert db.get(Account, sender.id).balance == Decimal("5000.00")
+        assert db.query(Transaction).count() == 0
 
 
 def test_inactive_accounts_and_insufficient_balance_are_rejected():

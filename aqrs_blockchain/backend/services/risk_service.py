@@ -39,7 +39,7 @@ def _coerce_decimal(amount: Any) -> Decimal:
         raise ValueError("Transaction amount is required.")
     try:
         value = Decimal(str(amount))
-    except (InvalidOperation, ValueError) as exc:
+    except (InvalidOperation, ValueError, TypeError) as exc:
         raise ValueError("Transaction amount must be a valid decimal value.") from exc
     if not value.is_finite():
         raise ValueError("Transaction amount must be a valid decimal value.")

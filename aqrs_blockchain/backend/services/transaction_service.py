@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from backend.models.account import Account, AccountStatus
@@ -27,17 +28,77 @@ class TransactionService:
             raise ValidationError("Transaction amount is required.")
         try:
             amount = Decimal(str(raw_amount))
-        except (InvalidOperation, ValueError) as exc:
+        except (InvalidOperation, ValueError, TypeError) as exc:
             raise ValidationError("Transaction amount must be a valid decimal value.") from exc
 
+        if not amount.is_finite():
+            raise ValidationError("Transaction amount must be a valid decimal value.")
         if amount <= 0:
             raise ValidationError("Transaction amount must be greater than zero.")
-        return amount.quantize(Decimal("0.01"))
+        if amount > Decimal("1000000000000"):
+            raise ValidationError("Transaction amount exceeds the allowed maximum.")
+        try:
+            rounded_amount = amount.quantize(Decimal("0.01"))
+        except InvalidOperation as exc:
+            raise ValidationError("Transaction amount has unsupported precision.") from exc
+        if rounded_amount != amount:
+            raise ValidationError("Transaction amount supports at most two decimal places.")
+        return rounded_amount
 
     @staticmethod
     def validate_account_state(account: Account) -> None:
         if account.status != AccountStatus.ACTIVE:
             raise ValidationError(f"Account {account.account_number} is not active.")
+
+    @staticmethod
+    def apply_transfer_balances(
+        db: Session,
+        *,
+        sender: Account,
+        receiver: Account,
+        amount: Decimal,
+    ) -> None:
+        if sender.id == receiver.id:
+            raise ValidationError("Sender and receiver accounts must be different.")
+
+        TransactionService.validate_account_state(sender)
+        TransactionService.validate_account_state(receiver)
+        if sender.currency != receiver.currency:
+            raise ValidationError("Sender and recipient accounts must use the same currency.")
+
+        debit = db.execute(
+            update(Account)
+            .where(
+                Account.id == sender.id,
+                Account.status == AccountStatus.ACTIVE,
+                Account.balance >= amount,
+            )
+            .values(balance=Account.balance - amount)
+            .execution_options(synchronize_session=False)
+        )
+        if debit.rowcount != 1:
+            db.refresh(sender)
+            TransactionService.validate_account_state(sender)
+            if amount > sender.balance:
+                raise InsufficientBalanceError("Insufficient balance for transfer.")
+            raise ValidationError("Sender account changed during transfer. Please retry.")
+
+        credit = db.execute(
+            update(Account)
+            .where(
+                Account.id == receiver.id,
+                Account.status == AccountStatus.ACTIVE,
+            )
+            .values(balance=Account.balance + amount)
+            .execution_options(synchronize_session=False)
+        )
+        if credit.rowcount != 1:
+            db.refresh(receiver)
+            TransactionService.validate_account_state(receiver)
+            raise ValidationError("Recipient account changed during transfer. Please retry.")
+
+        db.refresh(sender)
+        db.refresh(receiver)
 
     @staticmethod
     def create_transfer(

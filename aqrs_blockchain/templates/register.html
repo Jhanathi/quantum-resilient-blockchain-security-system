@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Create account - PQBank</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='static/css/style.css') }}">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body class="auth-page" data-page="register">
   <main class="auth-layout">
     <section class="auth-intro"><a class="brand brand-light" href="/"><span class="brand-mark">PQ</span><span>PQBank</span></a><p class="eyebrow">Customer banking</p><h1>Open a safer way to move money.</h1><p class="auth-copy">Create a customer account and explore risk-aware, post-quantum transaction protection.</p><div class="trust-line"><span class="status-dot"></span> Customer accounts are protected by server-side authorization</div></section>
     <section class="auth-card"><p class="eyebrow">Get started</p><h2>Create account</h2><p class="muted">Your role is assigned securely by the bank.</p><form id="register-form" class="form-stack"><label>Full name<input name="name" autocomplete="name" required></label><label>Username<input name="username" autocomplete="username" required></label><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label><div class="form-error" id="form-error"></div><button class="button button-primary" type="submit">Create account</button></form><p class="auth-switch">Already registered? <a href="/login">Sign in</a></p></section>
   </main>
-  <script src="{{ url_for('static', filename='static/js/app.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </body>
 </html>

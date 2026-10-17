@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import os
 import uuid
 from decimal import Decimal
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///./test_module5.db")
+import pytest
 
-from backend.database.database import SessionLocal, create_tables
-
-create_tables()
+from backend.database.database import Base, SessionLocal, engine
 from backend.models.account import Account, AccountStatus, AccountType
 from backend.models.aqrs_decision import AQRSDecision
+from backend.models.signature import Signature
 from backend.models.transaction import RiskLevel, Transaction, TransactionStatus
 from backend.models.user import User, UserRole
 from backend.services.crypto_service import (
@@ -18,6 +16,12 @@ from backend.services.crypto_service import (
     generate_ml_dsa_keypair,
     verify_transaction_signature,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_test_database():
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
 
 
 def _create_user_and_accounts(email: str, username: str, balance: str = "10000.00"):
@@ -163,6 +167,95 @@ def test_modified_amount_invalidates_signature():
             txn.id,
             tampered,
         )
+        assert result["valid"] is False
+
+
+def test_signature_rejects_tampering_of_every_signed_transaction_field():
+    from backend.services.crypto_service import canonical_transaction_payload
+
+    user, sender, receiver = _create_user_and_accounts("tamper_fields@example.com", "tamperfields")
+    with SessionLocal() as db:
+        transaction = Transaction(
+            transaction_id="TX-MODULE5-TAMPER-FIELDS",
+            sender_account_id=sender.id,
+            receiver_account_id=receiver.id,
+            amount=Decimal("25.00"),
+            currency="INR",
+            description="All signed fields are checked",
+            status=TransactionStatus.COMPLETED,
+            risk_level=RiskLevel.LOW,
+            aqrs_level=2,
+            cryptographic_mode="ML-DSA-44",
+        )
+        db.add(transaction)
+        db.flush()
+        db.add(AQRSDecision(
+            transaction_id=transaction.id,
+            risk_score=Decimal("0.00"),
+            risk_level=RiskLevel.LOW,
+            selected_security_level=2,
+            algorithm="ML-DSA-44",
+            security_level="ML-DSA-44",
+            decision_reason="LOW-risk test decision.",
+            aqrs_score=Decimal("0.0146"),
+        ))
+        db.flush()
+        assert CryptoSignatureService.sign_transaction(db, transaction.id)["valid"] is True
+        original = canonical_transaction_payload(transaction, transaction.aqrs_decision)
+
+        changes = {
+            "transaction_id": "TX-TAMPERED",
+            "sender_account_id": receiver.id,
+            "receiver_account_id": sender.id,
+            "amount": "250.00",
+            "currency": "USD",
+            "created_at": "2099-01-01T00:00:00+00:00",
+            "risk_level": "HIGH",
+            "security_level": "ML-DSA-87",
+            "algorithm": "ML-DSA-87",
+            "status": "FAILED",
+        }
+        for field, changed_value in changes.items():
+            altered = dict(original)
+            altered[field] = changed_value
+            result = CryptoSignatureService.verify_canonical_payload(db, transaction.id, altered)
+            assert result["valid"] is False, f"Tampering with {field} must invalidate the signature."
+
+
+def test_signature_verification_rejects_a_different_public_key():
+    _, sender, receiver = _create_user_and_accounts("wrong_key@example.com", "wrongkey")
+    with SessionLocal() as db:
+        transaction = Transaction(
+            transaction_id="TX-MODULE5-WRONG-PUBLIC-KEY",
+            sender_account_id=sender.id,
+            receiver_account_id=receiver.id,
+            amount=Decimal("25.00"),
+            currency="INR",
+            status=TransactionStatus.COMPLETED,
+            risk_level=RiskLevel.LOW,
+            aqrs_level=2,
+            cryptographic_mode="ML-DSA-44",
+        )
+        db.add(transaction)
+        db.flush()
+        db.add(AQRSDecision(
+            transaction_id=transaction.id,
+            risk_score=Decimal("0.00"),
+            risk_level=RiskLevel.LOW,
+            selected_security_level=2,
+            algorithm="ML-DSA-44",
+            security_level="ML-DSA-44",
+            decision_reason="LOW-risk wrong-key test.",
+            aqrs_score=Decimal("0.0146"),
+        ))
+        db.flush()
+        CryptoSignatureService.sign_transaction(db, transaction.id)
+        signature = db.query(Signature).filter_by(transaction_id=transaction.id).one()
+        different_public_key, _ = generate_ml_dsa_keypair(2)
+        signature.public_key_hex = different_public_key.hex()
+        db.flush()
+
+        result = CryptoSignatureService.verify_transaction_signature(db, transaction.id)
         assert result["valid"] is False
 
 

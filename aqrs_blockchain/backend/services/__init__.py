@@ -1,4 +1,5 @@
 from backend.services.account_service import AccountService
+from backend.services.auth_service import InvalidCurrentPassword, PasswordPolicyError, change_password, password_policy_error
 from backend.services.analytics_service import (
     get_admin_overview,
     get_audit_logs,
@@ -51,6 +52,10 @@ from backend.services.transaction_service import (
 
 __all__ = [
     "AccountService",
+    "InvalidCurrentPassword",
+    "PasswordPolicyError",
+    "change_password",
+    "password_policy_error",
     "get_admin_overview",
     "get_audit_logs",
     "get_aqrs_analytics",

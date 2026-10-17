@@ -1,1 +1,59 @@
-{% extends "ops_base.html" %}{% block title %}Security events - PQBank{% endblock %}{% block content %}<section class="page-heading"><div><p class="eyebrow">Security monitoring</p><h1>Security events</h1><p class="muted">Authentication failures, access violations, signature failures, and ledger events.</p></div></section><section class="panel-card table-card"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>User</th><th>Transaction</th><th>Status</th><th>Message</th></tr></thead><tbody id="security-audit-list"><tr><td colspan="6" class="table-message">Loading events...</td></tr></tbody></table></div></section>{% endblock %}
+{% extends "ops_base.html" %}
+{% block title %}Security audit and reports - PQBank{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/security-audit.css') }}">
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Security audit and reporting</p>
+    <h1>Audit events</h1>
+    <p class="muted">Review operational security events separately from controlled lab simulations.</p>
+  </div>
+</section>
+<section class="audit-metrics" id="audit-metrics" aria-label="Audit summary">
+  <article><strong id="audit-total">—</strong><span>Total events</span></article>
+  <article><strong id="audit-day">—</strong><span>Last 24 hours</span></article>
+  <article><strong id="audit-severe">—</strong><span>High / critical</span></article>
+  <article><strong id="audit-blocked">—</strong><span>Failed / blocked</span></article>
+  <article><strong id="audit-demo">—</strong><span>Demo / simulation</span></article>
+</section>
+<section class="audit-distributions">
+  <article class="panel-card"><p class="eyebrow">Severity distribution</p><div id="audit-severity-chart" class="audit-bars"></div></article>
+  <article class="panel-card"><p class="eyebrow">Event category distribution</p><div id="audit-category-chart" class="audit-bars"></div></article>
+</section>
+<section class="panel-card audit-filter-panel">
+  <div class="section-heading"><div><p class="eyebrow">Search and filters</p><h2>Find audit events</h2></div></div>
+  <form id="audit-filter-form" class="audit-filter-grid">
+    <label>Start date<input type="date" name="start_date"></label>
+    <label>End date<input type="date" name="end_date"></label>
+    <label>Severity<select name="severity"><option value="">All severities</option>{% for severity in severities %}<option value="{{ severity }}">{{ severity }}</option>{% endfor %}</select></label>
+    <label>Category<select name="category" id="audit-category-filter"><option value="">All categories</option></select></label>
+    <label>Outcome<select name="outcome"><option value="">All outcomes</option>{% for outcome in outcomes %}<option value="{{ outcome }}">{{ outcome }}</option>{% endfor %}</select></label>
+    <label>Actor<input type="search" name="actor" maxlength="120" placeholder="Username, email, or ID"></label>
+    <label>Mode<select name="mode"><option value="all">All events</option><option value="operational">Operational only</option><option value="demo">Demo / simulation only</option></select></label>
+    <label>Search<input type="search" name="search" maxlength="200" placeholder="Title, description, or event type"></label>
+    <label>Sort<select name="sort"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label>
+    <div class="audit-filter-actions"><button class="button button-primary" type="submit">Apply filters</button><button class="button button-quiet" id="audit-clear" type="button">Clear</button></div>
+  </form>
+  <div class="audit-export-actions">
+    <a class="button button-quiet" id="audit-export-csv" href="/api/security/audit/export.csv">Download CSV</a>
+    <a class="button button-quiet" id="audit-export-json" href="/api/security/audit/export.json">Download JSON</a>
+  </div>
+</section>
+<section class="panel-card audit-recent">
+  <div class="section-heading"><div><p class="eyebrow">Recent activity</p><h2>Latest audit events</h2></div></div>
+  <div id="audit-recent-list" class="audit-recent-list">Loading recent events...</div>
+</section>
+<section class="panel-card table-card audit-table-panel">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Timestamp</th><th>Event</th><th>Severity</th><th>Title</th><th>Actor</th><th>Outcome</th><th>Source</th><th>Type</th><th>Details</th></tr></thead>
+    <tbody id="security-audit-list"><tr><td colspan="9" class="table-message">Loading audit events...</td></tr></tbody>
+  </table></div>
+  <div class="audit-pagination"><button class="button button-quiet" id="audit-prev" type="button">Previous</button><span id="audit-page-status">Page 1</span><button class="button button-quiet" id="audit-next" type="button">Next</button></div>
+</section>
+<dialog id="audit-detail-dialog" class="audit-dialog">
+  <form method="dialog"><button class="button button-quiet audit-dialog-close" aria-label="Close details">Close</button></form>
+  <h2 id="audit-detail-title">Audit event</h2>
+  <div id="audit-detail-content"></div>
+</dialog>
+<script src="{{ url_for('static', filename='js/security-audit.js') }}" defer></script>
+{% endblock %}

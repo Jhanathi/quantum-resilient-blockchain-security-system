@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token }}" />
   <title>QuantumBank - Post-Quantum Banking Demo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1353,6 +1354,13 @@
       `;
     }
 
+    function csrfHeaders() {
+      return {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || "",
+      };
+    }
+
     async function submitTransaction() {
       const amountValue = Number(elements.amountInput.value) || 0;
       if (!amountValue) return;
@@ -1364,7 +1372,7 @@
       try {
         const response = await fetch("/api/transaction", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: csrfHeaders(),
           body: JSON.stringify({
             sender: elements.senderInput.value,
             receiver: elements.receiverInput.value,
@@ -1404,7 +1412,7 @@
       try {
         const response = await fetch("/api/sign-message", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: csrfHeaders(),
           body: JSON.stringify({ message, mode }),
         });
         const data = await response.json();
@@ -1424,7 +1432,7 @@
       try {
         const response = await fetch("/api/verify-message", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: csrfHeaders(),
           body: JSON.stringify({
             message: state.signatureCache.message,
             signature_hex: state.signatureCache.signature_hex,

@@ -1,15 +1,15 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csrf-token" content="{{ csrf_token }}">
   <title>Sign in - PQBank</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='static/css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body class="auth-page" data-page="login">
   <main class="auth-layout">
     <section class="auth-intro"><a class="brand brand-light" href="/"><span class="brand-mark">PQ</span><span>PQBank</span></a><p class="eyebrow">Post-quantum banking prototype</p><h1>Money movement with a visible chain of trust.</h1><p class="auth-copy">Your transfers are risk-classified, signed, verified, and recorded in a tamper-evident ledger.</p><div class="trust-line"><span class="status-dot"></span> Systems operational</div></section>
-    <section class="auth-card"><p class="eyebrow">Welcome back</p><h2>Sign in</h2><p class="muted">Use your customer account to continue.</p><form id="login-form" class="form-stack"><label>Email or username<input name="identity" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><div class="form-error" id="form-error"></div><button class="button button-primary" type="submit">Sign in</button></form><p class="auth-switch">New to PQBank? <a href="/register">Create a customer account</a></p></section>
+    <section class="auth-card"><p class="eyebrow">Welcome back</p><h2>Sign in</h2><p class="muted">Use your customer account to continue.</p>{% if request.args.get('password_changed') == '1' %}<p class="muted" role="status">Password changed. Sign in with your new password.</p>{% endif %}<form id="login-form" class="form-stack"><label>Email or username<input name="identity" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><div class="form-error" id="form-error"></div><button class="button button-primary" type="submit">Sign in</button></form><p class="auth-switch">New to PQBank? <a href="/register">Create a customer account</a></p></section>
   </main>
-  <script src="{{ url_for('static', filename='static/js/app.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </body>
 </html>

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
-os.environ["DATABASE_URL"] = "sqlite:///./test_auth_pqbank.db"
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite:///./test_auth_pqbank.db")
 
 from flask import session
 from werkzeug.security import generate_password_hash
@@ -86,7 +86,7 @@ def test_registration_rejects_invalid_role_and_invalid_input():
         "/api/auth/register",
         json={"name": "Mallory", "email": "mallory@example.com", "username": "mallory", "password": "StrongPass123!", "role": "ADMIN"},
     )
-    assert bad_role.status_code in (400, 201)
+    assert bad_role.status_code == 400
 
     short_password = client.post(
         "/api/auth/register",
@@ -111,6 +111,21 @@ def test_login_succeeds_and_fails_for_bad_credentials():
     assert unknown_user.status_code == 401
 
 
+def test_login_normalizes_email_case_and_surrounding_whitespace():
+    reset_database()
+    client = make_client()
+    register_user(client, email="normalized@example.com", username="normalized")
+
+    response = login_user(
+        client,
+        email="  NORMALIZED@EXAMPLE.COM  ",
+        password="StrongPass123!",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["user"]["email"] == "normalized@example.com"
+
+
 def test_inactive_user_cannot_login_and_me_requires_auth():
     reset_database()
     client = make_client()
@@ -126,6 +141,7 @@ def test_inactive_user_cannot_login_and_me_requires_auth():
 
     response = login_user(client, email="inactive@example.com", password="StrongPass123!")
     assert response.status_code == 401
+    assert response.get_json()["error"] == "This account is inactive."
 
     me = client.get("/api/auth/me")
     assert me.status_code == 401
@@ -145,6 +161,45 @@ def test_current_user_route_returns_safe_payload():
     assert payload["role"] == "CUSTOMER"
     assert "password_hash" not in payload
     assert "password" not in payload
+
+
+def test_registration_login_session_logout_and_protected_routes():
+    reset_database()
+    client = make_client()
+
+    assert client.get("/dashboard").status_code == 302
+    assert client.get("/api/auth/me").status_code == 401
+    assert register_user(client, email="session@example.com", username="sessionuser").status_code == 201
+
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "sessionuser", "password": "StrongPass123!"},
+    )
+    assert login.status_code == 200
+    assert "Set-Cookie" in login.headers
+    assert client.get("/api/auth/me").get_json()["user"]["username"] == "sessionuser"
+    assert client.get("/dashboard").status_code == 200
+
+    assert client.post("/api/auth/logout").status_code == 200
+    assert client.get("/api/auth/me").status_code == 401
+    assert client.get("/dashboard").status_code == 302
+
+
+def test_malformed_stored_password_hash_is_rejected_safely():
+    reset_database()
+    client = make_client()
+
+    from backend.database.database import SessionLocal
+
+    with SessionLocal() as db:
+        db.add(User(name="Broken Hash", username="brokenhash", email="broken@example.com", password_hash="not-a-password-hash"))
+        db.commit()
+
+    response = login_user(client, email="broken@example.com", password="StrongPass123!")
+
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "Invalid credentials."}
+    assert client.get("/api/auth/me").status_code == 401
 
 
 def test_customer_cannot_access_admin_and_security_role_is_enforced():

@@ -125,3 +125,18 @@ def test_chain_validation_detects_transaction_tampering(db_session):
     db_session.flush()
 
     assert validate_chain(db_session)["valid"] is False
+
+
+def test_chain_remains_valid_after_reloading_from_database(db_session):
+    transaction = _signed_transaction(db_session)
+    add_transaction_to_ledger(db_session, transaction.id)
+    db_session.commit()
+
+    reloaded_session = db_session.get_bind()
+    from sqlalchemy.orm import Session
+
+    with Session(reloaded_session) as fresh_session:
+        result = validate_chain(fresh_session)
+        assert result["valid"] is True
+        assert result["block_count"] == 2
+        assert fresh_session.query(Block).filter_by(block_number=1).one().transactions[0].transaction_id == transaction.transaction_id
