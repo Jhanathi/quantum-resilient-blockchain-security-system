@@ -1,4 +1,4 @@
-# Quantum AQRS Blockchain Simulation
+# Quantum Resilient Blockchain Security System
 
 This repository demonstrates an Adaptive Quantum-Readiness Scoring (AQRS) blockchain workflow. It compares classical ECDSA against post-quantum Dilithium signatures, measures signing and verification overhead, builds a simple blockchain of signed transactions, and produces results, charts, and API responses for inspection.
 
