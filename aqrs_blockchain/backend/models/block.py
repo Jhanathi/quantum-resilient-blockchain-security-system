@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.database.database import Base
 
 if TYPE_CHECKING:
+    from backend.models.deposit import Deposit
     from backend.models.transaction import Transaction
 
 
@@ -27,6 +28,7 @@ class Block(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="block")
+    deposits: Mapped[list["Deposit"]] = relationship(back_populates="block")
 
     @property
     def block_index(self) -> int:

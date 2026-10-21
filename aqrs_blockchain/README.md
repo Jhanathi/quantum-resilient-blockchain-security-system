@@ -188,6 +188,28 @@ copy pqbank.db "C:\temp\pqbank_backup_before_migration.db"
 
 Check that the backup file is readable and contains the expected tables before continuing. Do not overwrite the backup with a copy made after data loss. Use differences or a fresh backup if the main database has already been reset.
 
+### Customer accounts, transfers, and simulated deposits
+
+- Each customer may own multiple accounts. Existing `User.accounts` / `Account.user_id` relationships are reused; additional accounts are created with `POST /api/users/me/accounts` and are initially unfunded.
+- Account creation accepts an optional supported `account_type` (`SAVINGS` or `CURRENT`). The server assigns the authenticated user as owner and generates a unique account number.
+- Transfers use the source account's internal `sender_account_id` and the recipient's public `receiver_account_number`. The transfer screen labels these separately, lists only the signed-in user's active source accounts, and refreshes balances and recent activity after completion.
+- `POST /api/transactions` continues to support the existing idempotency key, CSRF, ownership checks, risk/AQRS selection, ML-DSA signature verification, audit logging, and blockchain inclusion.
+- The dashboard's **Add money** action submits `POST /api/deposits` for an account owned by the signed-in user. This is a **simulated demo credit only**: it does not contact a payment gateway, move real money, or verify an external bank payment. Deposits appear in history as `DEPOSIT`, not as transfers, and are added as their own entry to a hash-linked ledger block. Unlike transfers, demo credits do not use the transaction AQRS/ML-DSA signature path.
+- Both account creation and deposits have authenticated, CSRF-protected endpoints. Deposits require `Idempotency-Key`; a repeat request with the same key and payload replays the original receipt without crediting the balance again.
+
+The deposit history uses a new `simulated_deposits` table. It is created additively with the existing `create_all` initialization; existing accounts, transactions, and user associations are not rewritten. No manual migration or database reset is required. Tests must continue to point `TEST_DATABASE_URL` and `DATABASE_URL` at the same isolated SQLite file, never `pqbank.db`.
+
+Run focused account and money tests against a temporary SQLite file from
+PowerShell:
+
+```powershell
+$testDb = Join-Path $env:TEMP "pqbank-account-money-tests.sqlite"
+$env:TEST_DATABASE_URL = "sqlite:///$testDb"
+$env:DATABASE_URL = $env:TEST_DATABASE_URL
+python -m pytest tests/test_account_money.py tests/test_module11_controls.py -q
+Remove-Item -LiteralPath $testDb
+```
+
 ### Development user creation
 
 The test suite uses an isolated SQLite database; test users are not available to the running application. Register an account through `/register` so it is written to the same database used by the app. Public registration creates customer accounts only. Example payload:

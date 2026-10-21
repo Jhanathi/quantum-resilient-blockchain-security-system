@@ -64,6 +64,13 @@ check.
   response; reuse with a different payload returns HTTP 409. Concurrent
   duplicate requests either receive the stored response or a 409 while the
   original request is still processing and can retry with the same key.
+- `POST /api/users/me/accounts` creates only an account owned by the current
+  session user; account creation is unfunded and limited to the supported
+  account types. `POST /api/deposits` is an authenticated, ownership-checked,
+  CSRF-protected simulated credit with its own `deposit:create` idempotency
+  scope. It records `DEPOSIT` as a separate hash-linked ledger entry and is
+  rate-limited like transfer creation. It is not an external bank payment and
+  does not use the transfer AQRS/ML-DSA signature path.
 
 ## Verification
 

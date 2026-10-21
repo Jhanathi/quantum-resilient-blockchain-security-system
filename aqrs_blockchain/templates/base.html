@@ -6,6 +6,7 @@
   <meta name="csrf-token" content="{{ csrf_token }}">
   <title>{% block title %}PQBank{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/accounts.css') }}">
 </head>
 <body data-page="{{ page }}"{% if transaction_id %} data-transaction-id="{{ transaction_id }}"{% endif %}>
   <div class="app-shell">

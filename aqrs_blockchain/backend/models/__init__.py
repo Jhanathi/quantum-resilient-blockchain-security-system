@@ -2,6 +2,7 @@ from backend.models.account import Account, AccountStatus, AccountType
 from backend.models.aqrs_decision import AQRSDecision
 from backend.models.audit_log import AuditLog
 from backend.models.block import Block
+from backend.models.deposit import Deposit
 from backend.models.experiment import Experiment, ExperimentResult
 from backend.models.security_audit_event import SecurityAuditEvent
 from backend.models.signature import Signature
@@ -20,6 +21,7 @@ __all__ = [
     "Signature",
     "AQRSDecision",
     "Block",
+    "Deposit",
     "AuditLog",
     "SecurityAuditEvent",
     "Experiment",

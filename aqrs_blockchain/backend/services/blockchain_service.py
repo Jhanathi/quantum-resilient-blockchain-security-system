@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.audit_log import AuditLog
 from backend.models.block import Block
+from backend.models.deposit import Deposit
 from backend.models.transaction import Transaction, TransactionStatus
 from backend.services.crypto_service import CryptoSignatureService
 
@@ -44,7 +45,7 @@ def _transaction_reference(transaction: Transaction) -> dict[str, Any]:
 
 
 def _block_content(block: Block) -> dict[str, Any]:
-    return {
+    content = {
         "block_index": block.block_number,
         "timestamp": _as_utc_iso(block.timestamp),
         "previous_hash": block.previous_hash,
@@ -54,6 +55,19 @@ def _block_content(block: Block) -> dict[str, Any]:
             for transaction in sorted(block.transactions, key=lambda item: item.transaction_id)
         ],
     }
+    if block.deposits:
+        content["deposits"] = [
+            {
+                "transaction_id": deposit.transaction_id,
+                "account_id": deposit.account_id,
+                "amount": str(deposit.amount),
+                "currency": deposit.currency,
+                "status": deposit.status,
+                "created_at": _as_utc_iso(deposit.created_at),
+            }
+            for deposit in sorted(block.deposits, key=lambda item: item.transaction_id)
+        ]
+    return content
 
 
 def calculate_block_hash(block: Block) -> str:
@@ -144,6 +158,46 @@ def add_transaction_to_ledger(db: Session, transaction_id: str, *, user_id: str 
     return block
 
 
+def add_deposit_to_ledger(db: Session, deposit: Deposit, *, user_id: str | None = None) -> Block:
+    if deposit.status != "COMPLETED":
+        raise ValueError("Only completed deposits can be added to the ledger.")
+    if deposit.block is not None:
+        return deposit.block
+
+    ensure_genesis_block(db)
+    previous = db.query(Block).order_by(Block.block_number.desc()).first()
+    assert previous is not None
+    block = Block(
+        block_number=previous.block_number + 1,
+        timestamp=_utc_now(),
+        previous_hash=previous.block_hash,
+        block_hash="",
+        transaction_count=1,
+        block_size_bytes=0,
+    )
+    block.deposits.append(deposit)
+    db.add(block)
+    db.flush()
+    block.block_hash = calculate_block_hash(block)
+    block.block_size_bytes = _block_size(block)
+    db.add(
+        AuditLog(
+            user_id=user_id,
+            event_type="BLOCK_CREATED",
+            status="success",
+            message="Simulated deposit was added to the tamper-evident ledger.",
+            metadata_={
+                "block_number": block.block_number,
+                "block_hash": block.block_hash,
+                "previous_hash": block.previous_hash,
+                "deposit_reference": deposit.transaction_id,
+            },
+        )
+    )
+    db.flush()
+    return block
+
+
 def validate_block(db: Session, block: Block) -> dict[str, Any]:
     calculated_hash = calculate_block_hash(block)
     previous = db.query(Block).filter_by(block_number=block.block_number - 1).one_or_none()
@@ -152,7 +206,8 @@ def validate_block(db: Session, block: Block) -> dict[str, Any]:
         if block.block_number == 0
         else previous is not None and block.previous_hash == previous.block_hash
     )
-    valid = calculated_hash == block.block_hash and block.transaction_count == len(block.transactions) and previous_valid
+    entry_count = len(block.transactions) + len(block.deposits)
+    valid = calculated_hash == block.block_hash and block.transaction_count == entry_count and previous_valid
     return {
         "block_number": block.block_number,
         "block_hash": block.block_hash,
@@ -193,6 +248,7 @@ def get_transaction_block(db: Session, transaction_id: str) -> Block | None:
 __all__ = [
     "GENESIS_PREVIOUS_HASH",
     "add_transaction_to_ledger",
+    "add_deposit_to_ledger",
     "calculate_block_hash",
     "ensure_genesis_block",
     "get_block",

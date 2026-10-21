@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import update
@@ -101,6 +102,32 @@ class TransactionService:
         db.refresh(receiver)
 
     @staticmethod
+    def apply_deposit_balance(
+        db: Session,
+        *,
+        account: Account,
+        user_id: str,
+        amount: Decimal,
+    ) -> None:
+        credit = db.execute(
+            update(Account)
+            .where(
+                Account.id == account.id,
+                Account.user_id == user_id,
+                Account.status == AccountStatus.ACTIVE,
+            )
+            .values(balance=Account.balance + amount)
+            .execution_options(synchronize_session=False)
+        )
+        if credit.rowcount != 1:
+            db.refresh(account)
+            if account.user_id != user_id:
+                raise AuthorizationError("You can only deposit into your own account.")
+            TransactionService.validate_account_state(account)
+            raise ValidationError("Account changed during deposit. Please retry.")
+        db.refresh(account)
+
+    @staticmethod
     def create_transfer(
         db: Session,
         *,
@@ -115,14 +142,15 @@ class TransactionService:
         TransactionService.validate_account_state(sender)
         TransactionService.validate_account_state(receiver)
 
-        if amount > sender.balance:
-            raise InsufficientBalanceError("Insufficient balance for transfer.")
-
-        sender.balance -= amount
-        receiver.balance += amount
+        TransactionService.apply_transfer_balances(
+            db,
+            sender=sender,
+            receiver=receiver,
+            amount=amount,
+        )
 
         transaction = Transaction(
-            transaction_id=f"TX-{sender.account_number}-{receiver.account_number}-{abs(hash((sender.id, receiver.id, str(amount))))}",
+            transaction_id=f"TX-{uuid.uuid4().hex[:12].upper()}",
             sender_account_id=sender.id,
             receiver_account_id=receiver.id,
             amount=amount,

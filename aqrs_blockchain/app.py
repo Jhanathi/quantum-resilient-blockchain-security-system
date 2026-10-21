@@ -128,6 +128,7 @@ from backend.database.database import SessionLocal, create_tables
 from backend.models.account import Account, AccountStatus, AccountType
 from backend.models.aqrs_decision import AQRSDecision
 from backend.models.audit_log import AuditLog
+from backend.models.deposit import Deposit
 from backend.models.idempotency_record import IdempotencyRecord
 from backend.models.rate_limit_bucket import RateLimitBucket
 from backend.models.security_audit_event import SecurityAuditEvent
@@ -144,6 +145,7 @@ from backend.services import (
     TransactionService,
     ValidationError,
     add_transaction_to_ledger,
+    add_deposit_to_ledger,
     build_decision_for_amount,
     classify_transaction_risk,
     get_admin_overview,
@@ -419,6 +421,13 @@ def _rate_limit_for_request() -> tuple[str, int, int] | None:
             app.config["TRANSFER_RATE_LIMIT"],
             app.config["TRANSFER_RATE_WINDOW_SECONDS"],
         )
+    if endpoint == "create_deposit":
+        actor = session.get("user_id") or client_ip
+        return (
+            f"money-deposit:{actor}",
+            app.config["TRANSFER_RATE_LIMIT"],
+            app.config["TRANSFER_RATE_WINDOW_SECONDS"],
+        )
     if endpoint in {
         "security_audit_dashboard_api",
         "security_audit_api",
@@ -441,6 +450,7 @@ def _rate_limit_for_request() -> tuple[str, int, int] | None:
         "create_research_experiment_api",
         "change_password_api",
         "logout_user",
+        "my_accounts",
     }
     if (
         request.method not in {"GET", "HEAD", "OPTIONS"}
@@ -607,7 +617,12 @@ def transaction_details_page(transaction_id: str) -> Any:
     if user is None:
         return redirect(url_for("login_page"))
     with SessionLocal() as db:
-        if TransactionService.get_transaction_for_user(db, user.id, transaction_id) is None:
+        transaction = TransactionService.get_transaction_for_user(db, user.id, transaction_id)
+        deposit = db.query(Deposit).filter(
+            (Deposit.id == transaction_id) | (Deposit.transaction_id == transaction_id),
+            Deposit.user_id == user.id,
+        ).one_or_none()
+        if transaction is None and deposit is None:
             abort(404)
     return render_template("transaction_details.html", page="transaction-details", transaction_id=transaction_id)
 
@@ -1057,8 +1072,11 @@ def api_transactions() -> Any:
                 {
                     "id": tx.id,
                     "transaction_id": tx.transaction_id,
+                    "transaction_type": "TRANSFER",
                     "sender_account_id": tx.sender_account_id,
                     "receiver_account_id": tx.receiver_account_id,
+                    "sender_account_number": tx.sender_account.account_number,
+                    "receiver_account_number": tx.receiver_account.account_number,
                     "amount": str(tx.amount),
                     "currency": tx.currency,
                     "description": tx.description,
@@ -1069,6 +1087,33 @@ def api_transactions() -> Any:
                     "created_at": tx.created_at.isoformat() if tx.created_at else None,
                 }
             )
+        deposits = (
+            db.query(Deposit)
+            .filter_by(user_id=user.id)
+            .order_by(Deposit.created_at.desc())
+            .all()
+        )
+        for deposit in deposits:
+            serialized.append(
+                {
+                    "id": deposit.id,
+                    "transaction_id": deposit.transaction_id,
+                    "transaction_type": "DEPOSIT",
+                    "sender_account_id": None,
+                    "receiver_account_id": deposit.account_id,
+                    "sender_account_number": None,
+                    "receiver_account_number": deposit.account.account_number,
+                    "amount": str(deposit.amount),
+                    "currency": deposit.currency,
+                    "description": deposit.description,
+                    "status": deposit.status,
+                    "risk_level": None,
+                    "security_level": None,
+                    "algorithm": None,
+                    "created_at": deposit.created_at.isoformat() if deposit.created_at else None,
+                }
+            )
+        serialized.sort(key=lambda item: item["created_at"] or "", reverse=True)
 
     return jsonify({"transactions": serialized})
 
@@ -1196,11 +1241,7 @@ def create_transaction() -> Any:
             response.headers["Retry-After"] = "1"
             return response
 
-        sender = (
-            AccountService.get_account_for_user(db, user.id, sender_account_id)
-            if user.role != UserRole.ADMIN
-            else AccountService.get_account_by_id(db, sender_account_id)
-        )
+        sender = AccountService.get_account_for_user(db, user.id, sender_account_id)
         receiver = AccountService.get_account_by_identifier(
             db,
             receiver_identifier,
@@ -1209,7 +1250,7 @@ def create_transaction() -> Any:
 
         if sender is None:
             other_sender = AccountService.get_account_by_id(db, sender_account_id)
-            if other_sender is not None and user.role != UserRole.ADMIN:
+            if other_sender is not None:
                 db.rollback()
                 _record_security_audit(
                     "TRANSFER_AUTHORIZATION_DENIED",
@@ -1329,8 +1370,11 @@ def create_transaction() -> Any:
             response_payload = {
                 "id": txn.id,
                 "transaction_id": txn.transaction_id,
+                "transaction_type": "TRANSFER",
                 "sender_account_id": txn.sender_account_id,
                 "receiver_account_id": txn.receiver_account_id,
+                "sender_account_number": sender.account_number,
+                "receiver_account_number": receiver.account_number,
                 "amount": str(txn.amount),
                 "currency": txn.currency,
                 "status": txn.status.value if hasattr(txn.status, "value") else str(txn.status),
@@ -1416,6 +1460,30 @@ def get_transaction_by_id(transaction_id: str) -> Any:
     with SessionLocal() as db:
         txn = TransactionService.get_transaction_for_user(db, user.id, transaction_id)
         if txn is None:
+            deposit = db.query(Deposit).filter(
+                (Deposit.id == transaction_id) | (Deposit.transaction_id == transaction_id),
+                Deposit.user_id == user.id,
+            ).one_or_none()
+            if deposit is not None:
+                return jsonify(
+                    {
+                        "transaction": {
+                            "id": deposit.id,
+                            "transaction_id": deposit.transaction_id,
+                            "transaction_type": "DEPOSIT",
+                            "sender_account_id": None,
+                            "receiver_account_id": deposit.account_id,
+                            "sender_account_number": None,
+                            "receiver_account_number": deposit.account.account_number,
+                            "amount": str(deposit.amount),
+                            "currency": deposit.currency,
+                            "description": deposit.description,
+                            "status": deposit.status,
+                            "created_at": deposit.created_at.isoformat() if deposit.created_at else None,
+                        }
+                    }
+                )
+        if txn is None:
             if user.role in {UserRole.ADMIN, UserRole.SECURITY_ANALYST}:
                 txn = TransactionService.get_transaction_by_identifier(db, transaction_id)
             if txn is None:
@@ -1427,8 +1495,11 @@ def get_transaction_by_id(transaction_id: str) -> Any:
                 "transaction": {
                     "id": txn.id,
                     "transaction_id": txn.transaction_id,
+                    "transaction_type": "TRANSFER",
                     "sender_account_id": txn.sender_account_id,
                     "receiver_account_id": txn.receiver_account_id,
+                    "sender_account_number": txn.sender_account.account_number,
+                    "receiver_account_number": txn.receiver_account.account_number,
                     "amount": str(txn.amount),
                     "currency": txn.currency,
                     "description": txn.description,
@@ -1565,6 +1636,16 @@ def _serialize_block(block) -> Dict[str, Any]:
             }
             for transaction in block.transactions
         ],
+        "deposits": [
+            {
+                "id": deposit.id,
+                "transaction_id": deposit.transaction_id,
+                "account_id": deposit.account_id,
+                "amount": str(deposit.amount),
+                "currency": deposit.currency,
+            }
+            for deposit in block.deposits
+        ],
     }
 
 
@@ -1629,11 +1710,19 @@ def get_transaction_block(transaction_id: str) -> Any:
         txn = TransactionService.get_transaction_for_user(db, user.id, transaction_id)
         if txn is None and user.role in {UserRole.ADMIN, UserRole.SECURITY_ANALYST}:
             txn = TransactionService.get_transaction_by_identifier(db, transaction_id)
+        deposit = None
         if txn is None:
+            deposit_query = db.query(Deposit).filter(
+                (Deposit.id == transaction_id) | (Deposit.transaction_id == transaction_id)
+            )
+            if user.role not in {UserRole.ADMIN, UserRole.SECURITY_ANALYST}:
+                deposit_query = deposit_query.filter(Deposit.user_id == user.id)
+            deposit = deposit_query.one_or_none()
+        if txn is None and deposit is None:
             return jsonify({"error": "Transaction not found or access denied."}), 404
-        block = find_transaction_block(db, txn.id)
+        block = find_transaction_block(db, txn.id) if txn is not None else deposit.block
         if block is None:
-            return jsonify({"error": "Transaction is not included in the ledger."}), 404
+            return jsonify({"error": "Record is not included in the ledger."}), 404
         return jsonify({"block": _serialize_block(block)})
 
 
@@ -2367,6 +2456,258 @@ def my_accounts():
     with SessionLocal() as db:
         accounts = db.query(Account).filter_by(user_id=user.id).all()
     return jsonify({"accounts": [{"id": acc.id, "account_number": acc.account_number, "account_type": acc.account_type.value if hasattr(acc.account_type, "value") else str(acc.account_type), "balance": str(acc.balance), "currency": acc.currency, "status": acc.status.value if hasattr(acc.status, "value") else str(acc.status)} for acc in accounts]})
+
+
+@app.post("/api/users/me/accounts")
+@require_auth
+def create_my_account():
+    user = getattr(g, "current_user")
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+    account_type_value = str(payload.get("account_type", AccountType.SAVINGS.value)).upper()
+    try:
+        account_type = AccountType(account_type_value)
+    except ValueError:
+        return jsonify({"error": "Unsupported account type."}), 400
+
+    with SessionLocal() as db:
+        try:
+            account = AccountService.create_account(db, user.id, account_type)
+            db.add(
+                AuditLog(
+                    user_id=user.id,
+                    event_type="ACCOUNT_CREATED",
+                    status="success",
+                    message="Additional customer account created.",
+                    metadata_={"account_number": account.account_number, "account_type": account_type.value},
+                )
+            )
+            db.commit()
+            response_account = {
+                "id": account.id,
+                "account_number": account.account_number,
+                "account_type": account.account_type.value,
+                "balance": str(account.balance),
+                "currency": account.currency,
+                "status": account.status.value,
+            }
+        except Exception as exc:
+            db.rollback()
+            app.logger.error("Account creation failed (%s)", type(exc).__name__)
+            return jsonify({"error": "Account could not be created. Please retry."}), 500
+
+    _record_security_audit(
+        "ACCOUNT_CREATED",
+        "INFO",
+        "Additional account created",
+        "An authenticated customer created an additional unfunded account.",
+        "SUCCESS",
+        source="account",
+        category="ACCOUNT",
+        actor=user,
+        target_type="account",
+        target_id=response_account["id"],
+        metadata={"account_number": response_account["account_number"]},
+    )
+    return jsonify({"account": response_account}), 201
+
+
+@app.post("/api/deposits")
+@require_auth
+def create_deposit() -> Any:
+    user = getattr(g, "current_user")
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    account_id = str(payload.get("account_id") or "").strip()
+    if not account_id or len(account_id) > 36:
+        return jsonify({"error": "A valid account ID is required."}), 400
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._~-]{16,128}", idempotency_key):
+        return jsonify({"error": "A valid Idempotency-Key header is required."}), 400
+    try:
+        amount = TransactionService.parse_amount(payload.get("amount"))
+    except ValidationError as exc:
+        _record_security_audit(
+            "DEPOSIT_REJECTED",
+            "LOW",
+            "Simulated deposit rejected",
+            "A deposit request failed amount validation.",
+            "FAILURE",
+            source="deposit",
+            category="TRANSACTION",
+            actor=user,
+            metadata={"reason": str(exc)[:200]},
+        )
+        return jsonify({"error": str(exc)}), 400
+
+    fingerprint = sha256(
+        json.dumps(
+            {"account_id": account_id, "amount": str(amount)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with SessionLocal() as db:
+        idempotency_record = IdempotencyRecord(
+            user_id=user.id,
+            operation="deposit:create",
+            idempotency_key=idempotency_key,
+            request_fingerprint=fingerprint,
+        )
+        db.add(idempotency_record)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            with SessionLocal() as replay_db:
+                existing = (
+                    replay_db.query(IdempotencyRecord)
+                    .filter_by(
+                        user_id=user.id,
+                        operation="deposit:create",
+                        idempotency_key=idempotency_key,
+                    )
+                    .one_or_none()
+                )
+                if existing is None:
+                    return jsonify({"error": "Deposit request could not be claimed. Retry with the same key."}), 409
+                if existing.request_fingerprint != fingerprint:
+                    return jsonify({"error": "Idempotency-Key was already used with a different deposit."}), 409
+                if existing.response_json is None:
+                    return jsonify({"error": "This deposit request is still being processed. Retry with the same key."}), 409
+                response = jsonify(json.loads(existing.response_json))
+                response.headers["Idempotency-Replayed"] = "true"
+                return response
+
+        account = AccountService.get_account_for_user(db, user.id, account_id)
+        if account is None:
+            db.rollback()
+            other_account = AccountService.get_account_by_id(db, account_id)
+            if other_account is not None:
+                _record_security_audit(
+                    "DEPOSIT_AUTHORIZATION_DENIED",
+                    "HIGH",
+                    "Deposit to an unauthorized account blocked",
+                    "A user attempted to credit an account they do not own.",
+                    "BLOCKED",
+                    source="deposit",
+                    category="TRANSACTION",
+                    actor=user,
+                    target_type="account",
+                    target_id=other_account.id,
+                )
+                return jsonify({"error": "You can only deposit into your own account."}), 403
+            return jsonify({"error": "Account not found."}), 404
+
+        try:
+            TransactionService.validate_account_state(account)
+            TransactionService.apply_deposit_balance(
+                db,
+                account=account,
+                user_id=user.id,
+                amount=amount,
+            )
+            deposit = Deposit(
+                transaction_id=f"DP-{uuid.uuid4().hex[:16].upper()}",
+                account_id=account.id,
+                user_id=user.id,
+                amount=amount,
+                currency=account.currency,
+                description="Simulated demo credit",
+            )
+            db.add(deposit)
+            db.flush()
+            ledger_block = add_deposit_to_ledger(db, deposit, user_id=user.id)
+            response_payload = {
+                "message": "Simulated deposit completed successfully.",
+                "transaction": {
+                    "id": deposit.id,
+                    "transaction_id": deposit.transaction_id,
+                    "transaction_type": "DEPOSIT",
+                    "account_id": account.id,
+                    "account_number": account.account_number,
+                    "amount": str(deposit.amount),
+                    "currency": deposit.currency,
+                    "status": deposit.status,
+                    "created_at": deposit.created_at.isoformat(),
+                    "updated_balance": str(account.balance),
+                    "simulated": True,
+                    "block_number": ledger_block.block_number,
+                    "block_hash": ledger_block.block_hash,
+                },
+            }
+            db.add(
+                AuditLog(
+                    user_id=user.id,
+                    event_type="DEPOSIT_COMPLETED",
+                    status="success",
+                    message="Simulated demo credit recorded.",
+                    metadata_={
+                        "transaction_id": deposit.transaction_id,
+                        "account_number": account.account_number,
+                        "amount": str(amount),
+                        "block_number": ledger_block.block_number,
+                    },
+                )
+            )
+            idempotency_record.response_json = json.dumps(
+                response_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            db.commit()
+        except (ValidationError, AuthorizationError) as exc:
+            db.rollback()
+            status_code = 403 if isinstance(exc, AuthorizationError) else 400
+            _record_security_audit(
+                "DEPOSIT_REJECTED",
+                "LOW",
+                "Simulated deposit rejected",
+                "A deposit failed account validation and was rolled back.",
+                "FAILURE",
+                source="deposit",
+                category="TRANSACTION",
+                actor=user,
+                metadata={"reason": str(exc)[:200]},
+            )
+            return jsonify({"error": str(exc)}), status_code
+        except Exception as exc:
+            db.rollback()
+            app.logger.error("Simulated deposit failed (%s)", type(exc).__name__)
+            _record_security_audit(
+                "DEPOSIT_PROCESSING_FAILED",
+                "HIGH",
+                "Simulated deposit processing failed",
+                "A deposit failed unexpectedly and was rolled back.",
+                "FAILURE",
+                source="deposit",
+                category="TRANSACTION",
+                actor=user,
+            )
+            return jsonify({"error": "Deposit could not be completed. Please retry."}), 500
+
+    _record_security_audit(
+        "DEPOSIT_COMPLETED",
+        "INFO",
+        "Simulated demo deposit completed",
+        "An authenticated simulated credit was committed to the account.",
+        "SUCCESS",
+        source="deposit",
+        category="TRANSACTION",
+        actor=user,
+        target_type="deposit",
+        target_id=response_payload["transaction"]["id"],
+        metadata={
+            "transaction_id": response_payload["transaction"]["transaction_id"],
+            "account_number": response_payload["transaction"]["account_number"],
+            "block_number": response_payload["transaction"]["block_number"],
+        },
+    )
+    return jsonify(response_payload)
 
 
 @app.get("/api/accounts/<account_id>")

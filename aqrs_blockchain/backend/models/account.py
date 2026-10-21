@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.database.database import Base
 
 if TYPE_CHECKING:
+    from backend.models.deposit import Deposit
     from backend.models.transaction import Transaction
     from backend.models.user import User
 
@@ -55,6 +56,7 @@ class Account(Base):
         back_populates="receiver_account",
         foreign_keys="Transaction.receiver_account_id",
     )
+    deposits: Mapped[list["Deposit"]] = relationship(back_populates="account")
 
     def __repr__(self) -> str:
         return f"Account(id={self.id}, account_number={self.account_number!r}, balance={self.balance})"

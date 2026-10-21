@@ -13,6 +13,7 @@ from backend.services.analytics_service import (
     get_users,
 )
 from backend.services.blockchain_service import (
+    add_deposit_to_ledger,
     add_transaction_to_ledger,
     calculate_block_hash,
     ensure_genesis_block,
@@ -67,6 +68,7 @@ __all__ = [
     "get_transactions",
     "get_users",
     "add_transaction_to_ledger",
+    "add_deposit_to_ledger",
     "calculate_block_hash",
     "ensure_genesis_block",
     "get_block",
